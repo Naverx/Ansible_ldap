@@ -1,0 +1,150 @@
+---
+- hosts: ldap_servers
+  gather_facts: no 
+
+#Переменные домена, рут пароля и адреса сервера ldap 	  
+  vars:
+    ldap_basedn:  dc=example,dc=ru
+    ldap_bind_pw:    admin1
+    ldap_server_uri: ldap://localhost
+
+##Словарь с тестовыми юзерами
+    ldap_users: 
+      user_id1:
+        cn: Ivan Ivanov
+        givenname: Ivan
+        sn: Ivanov
+        mail: iv@example.ru
+        userpassword: password
+      user_id2:
+        cn: Petr Petrov
+        givenname: Petr
+        sn: Petrov
+        mail: Petr@example.ru
+        userpassword: password
+
+##Словарь с тестовыми группами
+    ldap_groups:  
+      - name: group1
+        members:
+          - user_id1
+      - name: group2
+        members:
+          - user_id1
+          - user_id2
+		  
+    dbtype: "{1}mdb" 
+    dbconfig_path: /usr/share/slapd/DB_CONFIG
+
+#Установка пакетов	    
+  tasks:
+  - name: install ldap
+    apt:
+      name:
+      - slapd
+      - ldap-utils
+      - python3-ldap
+      state: latest
+    tags: install
+	    
+#Запуск сервиса
+  - name: Start ldap service
+    service:
+      name: slapd
+      state: started
+      enabled: yes
+	      
+##Хэширование пароля от рут, заданного в начале плейбука
+  - name: encrypt password
+    command: slappasswd -s "{{ldap_bind_pw}}"
+    register: ldap_encripted_password
+
+##Копирование темплейта БД на сервер
+  - name: Copy db templates
+    template:
+      src: db.ldif
+      dest: /tmp
+
+##Загрузка темплейта в лдап	      
+  - name: Load ddbb template into ldap
+    command: ldapmodify -Y EXTERNAL  -H ldapi:/// -f /tmp/db.ldif
+
+##Задание админского юзера
+  - name: Load ldap root entry
+    ldap_entry:
+      server_uri: "{{ldap_server_uri}}"
+      bind_dn: "{{ldap_basedn}}"
+      bind_pw: "{{ldap_bind_pw}}"
+      dn: "{{ldap_basedn}}"
+      objectClass:
+        - top
+        - domain
+
+##Добавление ноды для юзеров и групп		
+  - name: Load groups and users parent entry
+    ldap_entry:
+      server_uri: "{{ldap_server_uri}}"
+      bind_dn: "{{ldap_basedn}}"
+      bind_pw: "{{ldap_bind_pw}}"
+      dn: "ou={{item}},{{ldap_basedn}}"
+      objectClass:
+        - organizationalUnit
+        - top
+    with_items:
+      - groups
+      - people
+
+#Задание 2 тестовых юзеров
+  - name: Load users
+    ldap_entry:
+      server_uri: "{{ldap_server_uri}}"
+      bind_dn: "{{ldap_basedn}}"
+      bind_pw: "{{ldap_bind_pw}}"
+      dn: "uid={{item.key}},ou=people,{{ldap_basedn}}"
+      objectClass:
+        - person
+        - organizationalPerson
+        - inetOrgPerson
+        - top
+      attributes:
+        cn: "{{item.value.cn}}"
+        givenname: "{{item.value.givenname}}"
+        sn: "{{item.value.sn}}"
+        uid: "{{item.key}}"
+        mail: "{{item.value.mail}}"
+        userpassword: "{{item.value.userpassword}}"
+    with_dict: "{{ldap_users}}"
+
+##Задание тестовых групп
+  - name: Load groups
+    ldap_entry:
+      server_uri: "{{ldap_server_uri}}"
+      bind_dn: "{{ldap_basedn}}"
+      bind_pw: "{{ldap_bind_pw}}"
+      dn: "cn={{item.name}},ou=groups,{{ldap_basedn}}"
+      objectClass:
+        - groupOfUniqueNames
+        - top
+      attributes:
+        uniqueMember: "uid=dummy,ou=people,{{ldap_basedn}}"
+    with_items: "{{ldap_groups}}"
+	    
+##Добавление тесовых юзеров в группы 
+  - name: Add users to groups
+    ldap_attrs:
+      server_uri: "{{ldap_server_uri}}"
+      bind_dn: "{{ldap_basedn}}"
+      bind_pw: "{{ldap_bind_pw}}"
+      dn: "cn={{item.0.name}},ou=groups,{{ldap_basedn}}"
+      attributes:
+        uniqueMember: "uid={{item.1}},ou=people,{{ldap_basedn}}"
+      state: present
+    with_subelements:
+      - "{{ldap_groups}}"
+      - members
+
+#Рестарт slapd 
+  - name: Restart ldap service
+    service:
+      name: slapd
+      state: restarted
