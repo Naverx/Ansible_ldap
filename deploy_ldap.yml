@@ -32,7 +32,7 @@
         members:
           - user_id1
           - user_id2
-		  
+	  
     dbtype: "{1}mdb" 
     dbconfig_path: /usr/share/slapd/DB_CONFIG
 
@@ -46,14 +46,14 @@
       - python3-ldap
       state: latest
     tags: install
-	    
+
 #Запуск сервиса
   - name: Start ldap service
     service:
       name: slapd
       state: started
       enabled: yes
-	      
+
 ##Хэширование пароля от рут, заданного в начале плейбука
   - name: encrypt password
     command: slappasswd -s "{{ldap_bind_pw}}"
@@ -128,7 +128,7 @@
       attributes:
         uniqueMember: "uid=dummy,ou=people,{{ldap_basedn}}"
     with_items: "{{ldap_groups}}"
-	    
+
 ##Добавление тесовых юзеров в группы 
   - name: Add users to groups
     ldap_attrs:
